@@ -47,76 +47,85 @@ public:
 
 	void OnPlayerLogin(Player* pPlayer) override
 	{
-		if (sConfigMgr->GetOption<bool>("Account.Achievements.Enable", true))
-		{
-			if (sConfigMgr->GetOption<bool>("Account.Achievements.Announce", true))
-			{
-				ChatHandler(pPlayer->GetSession()).SendSysMessage("This server is running the |cff4CFF00AccountAchievements |rmodule.");
-			}
+	        if (sConfigMgr->GetOption<bool>("Account.Achievements.Enable", true))
+	        {
+	                if (sConfigMgr->GetOption<bool>("Account.Achievements.Announce", true))
+	                {
+	                        ChatHandler(pPlayer->GetSession()).SendSysMessage("This server is running the |cff4CFF00AccountAchievements |rmodule.");
+	                }
 
-			std::vector<uint32> Guids;
-			QueryResult result1 = CharacterDatabase.Query("SELECT guid, race FROM characters WHERE account = {}", pPlayer->GetSession()->GetAccountId());
-			if (!result1)
-				return;
+	                uint32 accountId = pPlayer->GetSession()->GetAccountId();
+	                std::string guidsStr = "";
+	                QueryResult result1 = CharacterDatabase.Query("SELECT guid, race FROM characters WHERE account = {}", accountId);
 
-			do
-			{
-				Field* fields = result1->Fetch();
-				uint32 race = fields[1].Get<uint8>();
+	                if (!result1)
+	                        return;
 
-				if ((Player::TeamIdForRace(race) == Player::TeamIdForRace(pPlayer->getRace())) || !limitrace)
-					Guids.push_back(fields[0].Get<uint32>());
+	                std::vector<uint32> guids;
+	                do
+	                {
+	                        Field* fields = result1->Fetch();
+	                        uint32 race = fields[1].Get<uint8>();
 
-			} while (result1->NextRow());
+	                        if (!limitrace || (Player::TeamIdForRace(race) == Player::TeamIdForRace(pPlayer->getRace())))
+	                        {
+	                                guids.push_back(fields[0].Get<uint32>());
+	                                if (!guidsStr.empty()) guidsStr += ",";
+	                                guidsStr += std::to_string(fields[0].Get<uint32>());
+	                        }
 
-			std::vector<uint32> Achievement;
+	                } while (result1->NextRow());
 
-			for (auto& i : Guids)
-			{
-				QueryResult result2 = CharacterDatabase.Query("SELECT achievement FROM character_achievement WHERE guid = {}", i);
-				if (!result2)
-					continue;
+	                if (guidsStr.empty())
+	                        return;
 
-				do
-				{
-					uint32 achievementID = result2->Fetch()[0].Get<uint32>();
-					// Only add if not in the exclusion list
-					if (excludedAchievements.find(achievementID) == excludedAchievements.end()) 
-					{
-						Achievement.push_back(achievementID);
-					}
+	                std::unordered_set<uint32> achievementsToGrant;
+	                QueryResult result2 = CharacterDatabase.Query("SELECT DISTINCT achievement FROM character_achievement WHERE guid IN ({})", guidsStr);
 
-				} while (result2->NextRow());
-			}
+	                if (result2)
+	                {
+	                        do
+	                        {
+	                                uint32 achievementID = result2->Fetch()[0].Get<uint32>();
+	                                if (excludedAchievements.find(achievementID) == excludedAchievements.end())
+	                                {
+	                                        if (!pPlayer->HasAchieved(achievementID))
+	                                        {
+	                                                achievementsToGrant.insert(achievementID);
+	                                        }
+	                                }
+	                        } while (result2->NextRow());
+	                }
 
-			for (auto& i : Achievement)
-			{
-				auto sAchievement = sAchievementStore.LookupEntry(i);
-				if (sAchievement)
-				{
-					AddAchievements(pPlayer, sAchievement->ID);
-				}
-			}
-		}
+	                for (uint32 achievementID : achievementsToGrant)
+	                {
+	                        auto sAchievement = sAchievementStore.LookupEntry(achievementID);
+	                        if (sAchievement)
+	                        {
+	                                AddAchievements(pPlayer, sAchievement->ID);
+	                        }
+	                }
+	        }
 	}
 
 	void AddAchievements(Player* player, uint32 AchievementID)
 	{
-		if (sConfigMgr->GetOption<bool>("Account.Achievements.Enable", true))
-		{
-			if (limitlevel)
-				setlevel = minlevel;
+	        if (sConfigMgr->GetOption<bool>("Account.Achievements.Enable", true))
+	        {
+	                if (limitlevel)
+	                        setlevel = minlevel;
 
-			if (player->GetLevel() >= setlevel)
-			{
-				// Check exclusion before granting achievement
-				if (excludedAchievements.find(AchievementID) == excludedAchievements.end()) 
-				{
-					player->CompletedAchievement(sAchievementStore.LookupEntry(AchievementID));
-				}
-			}
-		}
+	                if (player->GetLevel() >= (uint32)setlevel)
+	                {
+	                        // Check exclusion before granting achievement
+	                        if (excludedAchievements.find(AchievementID) == excludedAchievements.end() && !player->HasAchieved(AchievementID))     
+	                        {
+	                                player->CompletedAchievement(sAchievementStore.LookupEntry(AchievementID));
+	                        }
+	                }
+	        }
 	}
+
 };
 
 void AddAccountAchievementsScripts()
